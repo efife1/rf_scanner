@@ -18,13 +18,90 @@ from flask_cors import CORS
 from export import export_bp
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DB_PATH      = Path("/home/pi/rf_scanner/data/scans.db")
+import os as _os
+
+DB_PATH      = Path(_os.environ.get("RF_SCANNER_DB",
+                    str(Path(__file__).parent.parent / "data" / "scans.db")))
 STATIC_DIR   = Path(__file__).parent.parent / "static"
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
+
+# Share resolved path with export blueprint via environment
+_os.environ.setdefault("RF_SCANNER_DB", str(DB_PATH))
 
 app = Flask(__name__, static_folder=str(STATIC_DIR), template_folder=str(TEMPLATE_DIR))
 CORS(app)  # allow remote browser access
 app.register_blueprint(export_bp)
+
+
+def init_db_schema():
+    """
+    Ensure ALL tables exist on startup — safe to call even when the DB was
+    seeded before the overlay feature was added.
+    """
+    if not DB_PATH.exists():
+        return  # will be created on first real request
+    try:
+        conn = sqlite3.connect(str(DB_PATH))
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS scan_sessions (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp    TEXT    NOT NULL,
+                latitude     REAL, longitude REAL, altitude_m REAL,
+                gps_quality  INTEGER, hdop REAL,
+                noise_mean   REAL, noise_std REAL, noise_median REAL,
+                noise_n      INTEGER, session_label TEXT
+            );
+            CREATE TABLE IF NOT EXISTS frequency_measurements (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id    INTEGER NOT NULL REFERENCES scan_sessions(id),
+                frequency_hz  REAL    NOT NULL,
+                amplitude_dbm REAL    NOT NULL,
+                snr_db        REAL,
+                is_outlier    INTEGER DEFAULT 0,
+                outlier_reason TEXT
+            );
+            CREATE TABLE IF NOT EXISTS noise_samples (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id    INTEGER NOT NULL REFERENCES scan_sessions(id),
+                frequency_hz  REAL    NOT NULL,
+                amplitude_dbm REAL    NOT NULL,
+                is_outlier    INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS overlay_layers (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT    NOT NULL,
+                color      TEXT    NOT NULL DEFAULT '#f0a500',
+                type       TEXT    NOT NULL DEFAULT 'drawn',
+                source     TEXT,
+                visible    INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE IF NOT EXISTS overlay_items (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                layer_id    INTEGER NOT NULL REFERENCES overlay_layers(id) ON DELETE CASCADE,
+                item_type   TEXT    NOT NULL,
+                name        TEXT,
+                description TEXT,
+                color       TEXT,
+                geometry    TEXT    NOT NULL,
+                created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_fm_session ON frequency_measurements(session_id);
+            CREATE INDEX IF NOT EXISTS idx_ns_session ON noise_samples(session_id);
+            CREATE INDEX IF NOT EXISTS idx_ss_time    ON scan_sessions(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_oi_layer   ON overlay_items(layer_id);
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[WARNING] Schema init error: {e}")
+
+
+# Run schema check at import time so the DB is always ready
+with app.app_context():
+    init_db_schema()
 
 
 # ── DB Helper ─────────────────────────────────────────────────────────────────
@@ -528,9 +605,18 @@ def index():
     return send_from_directory(str(TEMPLATE_DIR), "index.html")
 
 
-@app.route("/<path:filename>")
+@app.route("/static/<path:filename>")
 def static_files(filename):
+    """Serve CSS, JS, and other static assets from the static/ directory."""
     return send_from_directory(str(STATIC_DIR), filename)
+
+
+@app.errorhandler(404)
+def not_found(e):
+    # For unknown routes that aren't /api/*, serve index.html (SPA fallback)
+    if not request.path.startswith("/api/"):
+        return send_from_directory(str(TEMPLATE_DIR), "index.html")
+    return jsonify({"error": "Not found", "path": request.path}), 404
 
 
 if __name__ == "__main__":
