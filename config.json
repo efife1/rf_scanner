@@ -1,0 +1,26 @@
+{
+  "frequencies_hz": [
+    88100000,
+    100300000,
+    162400000,
+    433920000,
+    462562500,
+    915000000,
+    1090000000
+  ],
+  "dwell_ms": 250,
+  "scan_interval_s": 300,
+  "sdr_gain": "auto",
+  "sdr_ppm": 0,
+  "simulate": false,
+  "session_label": "default",
+  "_comments": {
+    "frequencies_hz": "Target frequencies in Hz. Add or remove as needed.",
+    "dwell_ms": "Time spent measuring each frequency (milliseconds).",
+    "scan_interval_s": "Seconds between automatic scan sessions.",
+    "sdr_gain": "RTL-SDR gain — 'auto' or a numeric value like '40'.",
+    "sdr_ppm": "Crystal frequency correction for your specific dongle (run rtl_test -p to find it).",
+    "simulate": "Set true to run without real SDR/GPS hardware (for testing).",
+    "session_label": "Tag applied to each session in the database."
+  }
+}

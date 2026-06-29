@@ -1,0 +1,139 @@
+/* rf_scanner/static/css/base.css
+   Shared design tokens and base styles loaded by index.html
+   Keep in sync with the :root block in index.html               */
+
+:root {
+  --bg:       #0d1117;
+  --surface:  #161b22;
+  --card:     #1c2230;
+  --border:   #30363d;
+  --accent:   #00d4aa;
+  --accent2:  #f0a500;
+  --danger:   #ff4d4f;
+  --good:     #3fb950;
+  --text:     #e6edf3;
+  --muted:    #8b949e;
+  --purple:   #a78bfa;
+  --radius:   8px;
+  --font:     'Segoe UI', system-ui, sans-serif;
+  --mono:     'Courier New', monospace;
+  --trans:    background .15s, border-color .15s, color .15s;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar          { width: 4px; height: 4px; }
+::-webkit-scrollbar-track    { background: transparent; }
+::-webkit-scrollbar-thumb    { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* ── Utility classes ── */
+.hidden   { display: none !important; }
+.mono     { font-family: var(--mono); }
+.muted    { color: var(--muted); }
+.accent   { color: var(--accent); }
+.danger   { color: var(--danger); }
+.good     { color: var(--good); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Pill badges ── */
+.pill {
+  display: inline-block;
+  font-size: .72rem; padding: 2px 9px; border-radius: 20px;
+  background: var(--card); color: var(--muted); border: 1px solid var(--border);
+  white-space: nowrap; line-height: 1.5;
+}
+.pill.live   { border-color: var(--good);   color: var(--good);   }
+.pill.warn   { border-color: var(--accent2); color: var(--accent2); }
+.pill.danger { border-color: var(--danger);  color: var(--danger);  }
+.pill.accent { border-color: var(--accent);  color: var(--accent);  }
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: .8rem; font-family: var(--font); padding: 5px 12px;
+  border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--card); color: var(--text); cursor: pointer;
+  transition: var(--trans); white-space: nowrap; user-select: none;
+}
+.btn:hover        { border-color: var(--accent); }
+.btn.primary      { background: var(--accent);   color: var(--bg);   border-color: var(--accent); font-weight: 600; }
+.btn.primary:hover{ background: #00b898; }
+.btn.secondary    { background: transparent; border-color: var(--border); }
+.btn.danger-btn   { border-color: var(--danger); color: var(--danger); background: rgba(255,77,79,.08); }
+.btn.kmz-btn      { border-color: var(--accent2); color: var(--accent2); background: rgba(240,165,0,.08); }
+.btn.kmz-btn:hover{ background: rgba(240,165,0,.16); }
+.btn.draw-btn     { border-color: var(--purple); color: var(--purple); background: rgba(167,139,250,.08); }
+.btn.draw-btn.active { background: var(--purple); color: var(--bg); }
+.btn:disabled     { opacity: .45; cursor: not-allowed; }
+.btn:disabled:hover { border-color: var(--border); }
+
+/* ── Cards ── */
+.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 14px;
+}
+
+/* ── Form elements ── */
+.input, .select, .textarea {
+  width: 100%; background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); color: var(--text); font-family: var(--font);
+  padding: 7px 10px; font-size: .85rem; outline: none; transition: border-color .15s;
+}
+.input:focus, .select:focus, .textarea:focus { border-color: var(--accent); }
+.textarea { resize: vertical; min-height: 64px; }
+
+/* ── Toggle group ── */
+.toggle-group { display: flex; gap: 5px; }
+.toggle-btn {
+  flex: 1; font-size: .78rem; font-family: var(--font);
+  padding: 5px 0; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--card);
+  color: var(--muted); cursor: pointer; text-align: center;
+  transition: var(--trans);
+}
+.toggle-btn.active {
+  background: var(--accent); color: var(--bg);
+  border-color: var(--accent); font-weight: 600;
+}
+
+/* ── Alert toast ── */
+.toast {
+  background: color-mix(in srgb, var(--danger) 15%, var(--surface));
+  border: 1px solid var(--danger); border-radius: var(--radius);
+  padding: 6px 12px; font-size: .78rem; color: var(--danger);
+  animation: slideIn .3s ease; max-width: 280px;
+}
+@keyframes slideIn { from { opacity:0; transform:translateX(20px); } }
+
+/* ── Date range filter bar ── */
+#filter-bar {
+  display: none; flex-wrap: wrap; align-items: center; gap: 8px;
+  padding: 8px 14px; background: var(--card);
+  border-bottom: 1px solid var(--border); font-size: .8rem;
+}
+#filter-bar.open { display: flex; }
+#filter-bar label { color: var(--muted); }
+#filter-bar input[type="date"],
+#filter-bar input[type="number"],
+#filter-bar select {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 5px; color: var(--text); padding: 4px 8px;
+  font-size: .78rem; outline: none;
+}
+#filter-bar input:focus, #filter-bar select:focus { border-color: var(--accent); }
+#filter-active-badge { display: none; }
+#filter-active-badge.on { display: inline-block; }
+
+/* ── Leaflet dark overrides ── */
+.leaflet-popup-content-wrapper {
+  background: var(--card); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: 0 4px 20px #0008;
+}
+.leaflet-popup-tip { background: var(--card); }
+.leaflet-control-zoom a {
+  background: var(--surface) !important; color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+.leaflet-control-zoom a:hover { background: var(--card) !important; }
+.leaflet-bar { border: 1px solid var(--border) !important; }

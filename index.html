@@ -1,0 +1,1328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RF Scanner — Live Map</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <!-- Leaflet.heat -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
+  <!-- Chart.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <!-- JSZip — unzip .kmz files in the browser -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:      #0d1117; --surface: #161b22; --card: #1c2230;
+      --border:  #30363d; --accent:  #00d4aa; --accent2: #f0a500;
+      --danger:  #ff4d4f; --good:    #3fb950; --text: #e6edf3;
+      --muted:   #8b949e; --radius:  8px;
+      --font:    'Segoe UI', system-ui, sans-serif;
+      --mono:    'Courier New', monospace;
+    }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); }
+    #app { display: grid; grid-template-rows: 52px 1fr; height: 100vh; }
+
+    /* ── Top bar ── */
+    #topbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 0 16px; background: var(--surface);
+      border-bottom: 1px solid var(--border); z-index: 1000;
+    }
+    #topbar h1 { font-size: 1.05rem; font-weight: 700; color: var(--accent); white-space: nowrap; }
+    #topbar h1 span { color: var(--text); font-weight: 400; }
+    .pill { font-size: .72rem; padding: 3px 9px; border-radius: 20px; background: var(--card); color: var(--muted); border: 1px solid var(--border); white-space: nowrap; }
+    .pill.live { border-color: var(--good); color: var(--good); }
+    .pill.warn { border-color: var(--danger); color: var(--danger); }
+    #topbar-right { margin-left: auto; display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+    .btn { font-size: .8rem; font-family: var(--font); padding: 5px 12px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; transition: border-color .15s, background .15s; white-space: nowrap; }
+    .btn:hover { border-color: var(--accent); }
+    .btn.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+    .btn.primary:hover { background: #00b898; }
+    .btn.danger { background: color-mix(in srgb,var(--danger) 15%,var(--card)); border-color: var(--danger); color: var(--danger); }
+    .btn.kmz { background: color-mix(in srgb,var(--accent2) 12%,var(--card)); border-color: var(--accent2); color: var(--accent2); }
+    .btn.kmz:hover { background: color-mix(in srgb,var(--accent2) 22%,var(--card)); }
+    .btn.draw { background: color-mix(in srgb,#a78bfa 12%,var(--card)); border-color: #a78bfa; color: #a78bfa; }
+    .btn.draw.active { background: #a78bfa; color: var(--bg); }
+
+    /* ── Main layout ── */
+    #main { display: grid; grid-template-columns: 300px 1fr; overflow: hidden; }
+
+    /* ── Sidebar ── */
+    #sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; }
+    .sidebar-section { padding: 12px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .sidebar-section h2 { font-size: .73rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+    .toggle-group { display: flex; gap: 5px; }
+    .toggle-btn { flex: 1; font-size: .78rem; font-family: var(--font); padding: 5px 0; border-radius: var(--radius); border: 1px solid var(--border); background: var(--card); color: var(--muted); cursor: pointer; transition: all .15s; }
+    .toggle-btn.active { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+
+    /* sidebar tabs */
+    .sb-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .sb-tab { flex: 1; padding: 9px 4px; font-size: .75rem; text-align: center; cursor: pointer; color: var(--muted); border-bottom: 2px solid transparent; transition: all .15s; }
+    .sb-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .sb-panel { display: none; flex-direction: column; overflow: hidden; flex: 1; }
+    .sb-panel.active { display: flex; }
+
+    /* freq list */
+    #freq-scroll { overflow-y: auto; flex: 1; }
+    .freq-item { display: flex; align-items: center; justify-content: space-between; padding: 7px 14px; border-bottom: 1px solid var(--border); cursor: pointer; transition: background .1s; font-size: .85rem; }
+    .freq-item:hover { background: var(--card); }
+    .freq-item.active { background: color-mix(in srgb, var(--accent) 12%, transparent); border-left: 3px solid var(--accent); }
+    .freq-item.active .freq-mhz { color: var(--accent); }
+    .freq-mhz { font-family: var(--mono); font-size: .85rem; font-weight: 600; }
+    .freq-badge { font-size: .68rem; padding: 2px 6px; border-radius: 10px; background: var(--card); color: var(--muted); border: 1px solid var(--border); }
+    .freq-badge.alert { border-color: var(--danger); color: var(--danger); }
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+    .stat-cell { background: var(--card); border-radius: var(--radius); padding: 7px 9px; }
+    .stat-cell .val { font-family: var(--mono); font-size: .95rem; color: var(--accent); }
+    .stat-cell .lbl { font-size: .67rem; color: var(--muted); margin-top: 2px; }
+
+    /* ── Layer panel ── */
+    #layer-panel { display: flex; flex-direction: column; overflow: hidden; flex: 1; }
+    .layer-toolbar { padding: 8px 10px; display: flex; gap: 5px; flex-wrap: wrap; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    #layer-list { overflow-y: auto; flex: 1; padding: 6px; }
+    .layer-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 7px 8px; border-radius: 6px; margin-bottom: 4px;
+      border: 1px solid var(--border); background: var(--card);
+      font-size: .8rem; cursor: default;
+    }
+    .layer-item:hover { border-color: color-mix(in srgb,var(--accent) 40%,var(--border)); }
+    .layer-color { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+    .layer-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .layer-count { font-size: .68rem; color: var(--muted); white-space: nowrap; }
+    .layer-vis { cursor: pointer; color: var(--muted); font-size: .85rem; padding: 2px 4px; border-radius: 3px; }
+    .layer-vis:hover { color: var(--accent); }
+    .layer-del { cursor: pointer; color: var(--muted); font-size: .85rem; padding: 2px 4px; border-radius: 3px; }
+    .layer-del:hover { color: var(--danger); }
+    .layer-zoom { cursor: pointer; color: var(--muted); font-size: .85rem; padding: 2px 4px; border-radius: 3px; }
+    .layer-zoom:hover { color: var(--accent2); }
+    .layer-empty { padding: 20px 14px; color: var(--muted); font-size: .82rem; text-align: center; line-height: 1.5; }
+
+    /* ── Map area ── */
+    #map-area { position: relative; display: flex; flex-direction: column; overflow: hidden; }
+    #map { flex: 1; }
+
+    /* ── Draw toolbar (floating) ── */
+    #draw-toolbar {
+      position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 900; display: none;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 30px; padding: 6px 14px; gap: 6px;
+      align-items: center; font-size: .8rem; color: var(--text);
+      box-shadow: 0 4px 20px #0006;
+    }
+    #draw-toolbar.visible { display: flex; }
+    .draw-tool-btn { padding: 5px 12px; border-radius: 20px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; font-size: .78rem; transition: all .15s; }
+    .draw-tool-btn:hover, .draw-tool-btn.active { background: #a78bfa; color: var(--bg); border-color: #a78bfa; font-weight: 600; }
+    .draw-tool-btn.finish { background: var(--good); color: var(--bg); border-color: var(--good); }
+    .draw-tool-btn.cancel { background: color-mix(in srgb,var(--danger) 15%,var(--card)); color: var(--danger); border-color: var(--danger); }
+
+    /* ── Drawer ── */
+    #drawer { height: 210px; background: var(--surface); border-top: 1px solid var(--border); display: grid; grid-template-columns: 1fr 1fr 1fr; }
+    .drawer-panel { padding: 10px 14px; border-right: 1px solid var(--border); overflow: hidden; }
+    .drawer-panel:last-child { border-right: none; }
+    .drawer-panel h3 { font-size: .72rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 7px; }
+    .chart-wrap { height: 150px; position: relative; }
+
+    /* ── Map overlays ── */
+    #legend { position: absolute; bottom: 220px; right: 10px; z-index: 800; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 9px 12px; min-width: 150px; }
+    #legend h4 { font-size: .7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 7px; }
+    .legend-bar { height: 9px; border-radius: 4px; margin-bottom: 4px; background: linear-gradient(to right,#0d47a1,#0288d1,#00bcd4,#69ff47,#ffff00,#ff6d00,#ff1744); }
+    .legend-labels { display: flex; justify-content: space-between; font-size: .68rem; color: var(--muted); font-family: var(--mono); }
+    #gps-bar { position: absolute; top: 8px; left: 8px; z-index: 800; background: rgba(22,27,34,.92); border: 1px solid var(--border); border-radius: var(--radius); padding: 5px 10px; font-size: .72rem; color: var(--muted); font-family: var(--mono); }
+    #alerts-bar { position: absolute; top: 8px; right: 10px; z-index: 800; display: flex; flex-direction: column; gap: 5px; max-width: 270px; }
+    .alert-pill { background: color-mix(in srgb,var(--danger) 15%,var(--surface)); border: 1px solid var(--danger); border-radius: var(--radius); padding: 5px 10px; font-size: .76rem; color: var(--danger); animation: slideIn .3s ease; }
+    @keyframes slideIn { from { opacity:0; transform:translateX(20px); } }
+
+    /* ── Loading ── */
+    #loading { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; z-index: 9999; transition: opacity .4s; }
+    #loading.hidden { opacity: 0; pointer-events: none; }
+    .spinner { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Placemark name modal ── */
+    #name-modal { position: fixed; inset: 0; background: #0008; z-index: 10000; display: none; align-items: center; justify-content: center; }
+    #name-modal.open { display: flex; }
+    .modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px 24px; min-width: 320px; box-shadow: 0 8px 40px #000a; }
+    .modal-box h3 { font-size: 1rem; margin-bottom: 14px; color: var(--text); }
+    .modal-box input, .modal-box textarea, .modal-box select {
+      width: 100%; background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); color: var(--text); font-family: var(--font);
+      padding: 7px 10px; font-size: .85rem; margin-bottom: 10px; outline: none;
+    }
+    .modal-box input:focus, .modal-box textarea:focus { border-color: var(--accent); }
+    .modal-box textarea { resize: vertical; height: 70px; }
+    .modal-row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+    .modal-row label { font-size: .78rem; color: var(--muted); white-space: nowrap; }
+    .modal-btns { display: flex; gap: 8px; margin-top: 6px; }
+    .modal-btns .btn { flex: 1; text-align: center; }
+
+    /* ── Popup ── */
+    .leaflet-popup-content-wrapper { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 4px 20px #0008; }
+    .leaflet-popup-tip { background: var(--card); }
+    .popup-inner { font-family: var(--font); font-size: .8rem; line-height: 1.7; min-width: 160px; }
+    .popup-inner .ph { font-size: 1rem; font-weight: 700; }
+    .popup-inner .ph.good { color: var(--good); }
+    .popup-inner .ph.warn { color: var(--accent2); }
+    .popup-inner .ph.bad  { color: var(--danger); }
+    .popup-inner .pop-title { font-size: .9rem; font-weight: 600; color: var(--accent); margin-bottom: 4px; }
+    .popup-inner .pop-desc { color: var(--muted); font-size: .76rem; margin-top: 3px; }
+    .popup-edit-btn { margin-top: 8px; font-size: .75rem; padding: 3px 10px; border-radius: 5px; border: 1px solid var(--accent); color: var(--accent); background: transparent; cursor: pointer; }
+    .popup-edit-btn:hover { background: color-mix(in srgb,var(--accent) 12%,transparent); }
+    .popup-del-btn { margin-top: 4px; font-size: .75rem; padding: 3px 10px; border-radius: 5px; border: 1px solid var(--danger); color: var(--danger); background: transparent; cursor: pointer; }
+
+    /* ── Drop zone ── */
+    #drop-zone { position: fixed; inset: 0; background: rgba(0,212,170,.08); border: 3px dashed var(--accent); z-index: 9998; display: none; align-items: center; justify-content: center; pointer-events: none; }
+    #drop-zone.active { display: flex; }
+    #drop-zone span { font-size: 1.5rem; color: var(--accent); background: var(--surface); padding: 16px 30px; border-radius: 12px; border: 1px solid var(--accent); }
+
+    /* ── Export menu ── */
+    .export-item { padding: 8px 14px; font-size: .8rem; cursor: pointer; color: var(--text); transition: background .1s; white-space: nowrap; }
+    .export-item:hover { background: var(--card); color: var(--accent); }
+    /* ── Filter bar ── */
+    #filter-bar { display: none; flex-wrap: wrap; align-items: center; gap: 8px; padding: 7px 16px; background: var(--card); border-bottom: 1px solid var(--border); font-size: .78rem; color: var(--muted); flex-shrink: 0; }
+    #filter-bar.open { display: flex; }
+    #filter-bar input[type="date"] { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; color: var(--text); padding: 4px 8px; font-size: .78rem; outline: none; }
+    #filter-active-badge { display: none; }
+    #filter-active-badge.on { display: inline-block; }
+    /* ── Danger btn ── */
+    .danger-btn { border-color: var(--danger); color: var(--danger); background: rgba(255,77,79,.08); }
+
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    /* hidden file input */
+    #kmz-input { display: none; }
+  </style>
+</head>
+<body>
+
+<!-- Drop zone overlay -->
+<div id="drop-zone"><span>📂 Drop KMZ / KML file here</span></div>
+
+<!-- Loading screen -->
+<div id="loading">
+  <div class="spinner"></div>
+  <span style="color:var(--muted);font-size:.88rem;">Loading RF Scanner…</span>
+</div>
+
+<!-- Placemark / Path name modal -->
+<div id="name-modal">
+  <div class="modal-box">
+    <h3 id="modal-title">Add placemark</h3>
+    <input id="modal-name" type="text" placeholder="Name (required)" />
+    <textarea id="modal-desc" placeholder="Description (optional)"></textarea>
+    <div class="modal-row">
+      <label>Icon color</label>
+      <input id="modal-color" type="color" value="#f0a500" style="width:48px;height:32px;padding:2px;cursor:pointer" />
+      <label style="margin-left:12px">Layer</label>
+      <select id="modal-layer" style="flex:1"></select>
+    </div>
+    <div class="modal-btns">
+      <button class="btn primary" onclick="modalConfirm()">Save</button>
+      <button class="btn" onclick="modalCancel()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden KMZ file input -->
+<input type="file" id="kmz-input" accept=".kmz,.kml" multiple />
+
+<div id="app">
+  <header id="topbar">
+    <h1>⚡ RF Scanner <span>/ Live Map</span></h1>
+    <span class="pill" id="status-pill">connecting…</span>
+    <span class="pill" id="session-count">— sessions</span>
+    <div id="topbar-right">
+      <span style="font-size:.75rem;color:var(--muted)" id="last-update"></span>
+      <button class="btn" onclick="refreshAll()">⟳ Refresh</button>
+      <button class="btn" id="btn-filter" onclick="toggleFilter()" title="Date / session filter">🗓 Filter</button>
+      <button class="pill accent" id="filter-active-badge" style="cursor:pointer" onclick="clearFilter()">Filter active ✕</button>
+      <button class="btn kmz" onclick="document.getElementById('kmz-input').click()">📂 Import KMZ</button>
+      <button class="btn draw" id="btn-draw-mode" onclick="toggleDrawMode()">✏ Draw</button>
+      <div style="position:relative">
+        <button class="btn primary" onclick="toggleExportMenu()" id="btn-export">↓ Export ▾</button>
+        <div id="export-menu" style="display:none;position:absolute;right:0;top:110%;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);min-width:170px;z-index:2000;padding:4px 0;">
+          <div class="export-item" onclick="exportAction('csv')">📄 CSV — all sessions</div>
+          <div class="export-item" onclick="exportAction('geojson')">🌐 GeoJSON</div>
+          <div class="export-item" onclick="exportAction('kml')">📍 KML — scan points</div>
+          <div class="export-item" onclick="exportAction('overlays_kmz')">📂 KMZ — my overlays</div>
+          <div class="export-item" onclick="exportAction('combined_kmz')">🗂 KMZ — everything</div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Date / session filter bar -->
+  <div id="filter-bar">
+    <label>From</label>
+    <input type="date" id="f-from" onchange="applyFilter()" />
+    <label>To</label>
+    <input type="date" id="f-to" onchange="applyFilter()" />
+    <label>Label contains</label>
+    <input type="text" id="f-label" placeholder="e.g. survey_day" style="width:140px;background:var(--surface);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 8px;font-size:.78rem;outline:none" oninput="applyFilter()" />
+    <label>Frequency</label>
+    <select id="f-freq" onchange="applyFilter()" style="background:var(--surface);border:1px solid var(--border);border-radius:5px;color:var(--text);padding:4px 8px;font-size:.78rem;outline:none">
+      <option value="">All</option>
+    </select>
+    <button class="btn danger-btn" style="font-size:.75rem;padding:4px 9px" onclick="clearFilter()">✕ Clear</button>
+  </div>
+
+  <div id="main">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-section">
+        <h2>Display Mode</h2>
+        <div class="toggle-group">
+          <button class="toggle-btn active" id="btn-amplitude" onclick="setMode('amplitude')">Amplitude</button>
+          <button class="toggle-btn" id="btn-snr" onclick="setMode('snr')">SNR</button>
+        </div>
+      </div>
+      <div class="sidebar-section">
+        <h2>Frequency View</h2>
+        <div class="toggle-group">
+          <button class="toggle-btn active" id="btn-avg" onclick="setView('average')">Average</button>
+          <button class="toggle-btn" id="btn-single" onclick="setView('single')">Single Freq</button>
+        </div>
+      </div>
+      <div class="sidebar-section">
+        <h2>Noise Floor (Latest)</h2>
+        <div class="stat-grid">
+          <div class="stat-cell"><div class="val" id="nf-mean">—</div><div class="lbl">Mean (dBm)</div></div>
+          <div class="stat-cell"><div class="val" id="nf-std">—</div><div class="lbl">Std Dev</div></div>
+          <div class="stat-cell"><div class="val" id="nf-median">—</div><div class="lbl">Median (dBm)</div></div>
+          <div class="stat-cell"><div class="val" id="nf-n">—</div><div class="lbl">Samples</div></div>
+        </div>
+      </div>
+
+      <!-- Sidebar tabs -->
+      <div class="sb-tabs">
+        <div class="sb-tab active" onclick="sbTab('freq',this)">Frequencies</div>
+        <div class="sb-tab" onclick="sbTab('layers',this)">Layers</div>
+      </div>
+
+      <!-- Frequencies panel -->
+      <div class="sb-panel active" id="sb-freq">
+        <div id="freq-scroll"><div id="freq-list"><div style="padding:14px;color:var(--muted);font-size:.82rem">Loading…</div></div></div>
+      </div>
+
+      <!-- Layers panel -->
+      <div class="sb-panel" id="sb-layers">
+        <div id="layer-panel">
+          <div class="layer-toolbar">
+            <button class="btn" style="font-size:.75rem;padding:4px 9px" onclick="document.getElementById('kmz-input').click()">📂 Import KMZ</button>
+            <button class="btn" style="font-size:.75rem;padding:4px 9px" onclick="startDraw('placemark')">📍 Placemark</button>
+            <button class="btn" style="font-size:.75rem;padding:4px 9px" onclick="startDraw('path')">〰 Path</button>
+            <button class="btn danger" style="font-size:.75rem;padding:4px 9px" onclick="clearAllOverlays()">✕ Clear all</button>
+          </div>
+          <div id="layer-list">
+            <div class="layer-empty">No layers yet.<br>Import a KMZ or use Draw to add placemarks and paths.</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Map + drawer -->
+    <div id="map-area">
+      <div id="map"></div>
+
+      <!-- Draw toolbar -->
+      <div id="draw-toolbar">
+        <span id="draw-label" style="color:var(--muted)">Drawing:</span>
+        <button class="draw-tool-btn active" id="dt-placemark" onclick="setDrawTool('placemark')">📍 Placemark</button>
+        <button class="draw-tool-btn" id="dt-path" onclick="setDrawTool('path')">〰 Path</button>
+        <button class="draw-tool-btn finish" id="dt-finish" onclick="finishPath()" style="display:none">✓ Finish path</button>
+        <button class="draw-tool-btn cancel" onclick="exitDrawMode()">✕ Exit</button>
+      </div>
+
+      <!-- Overlays -->
+      <div id="gps-bar">📡 GPS: waiting…</div>
+      <div id="alerts-bar"></div>
+      <div id="legend">
+        <h4 id="legend-title">Amplitude (dBm)</h4>
+        <div class="legend-bar"></div>
+        <div class="legend-labels"><span id="leg-lo">Low</span><span id="leg-hi">High</span></div>
+      </div>
+
+      <!-- Bottom drawer -->
+      <div id="drawer">
+        <div class="drawer-panel"><h3>Spectrum — Latest Session</h3><div class="chart-wrap"><canvas id="chart-spectrum"></canvas></div></div>
+        <div class="drawer-panel"><h3>SNR — Latest Session</h3><div class="chart-wrap"><canvas id="chart-snr"></canvas></div></div>
+        <div class="drawer-panel"><h3 id="timeseries-title">Time Series</h3><div class="chart-wrap"><canvas id="chart-timeseries"></canvas></div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════════════════
+const API = '';
+let MODE = 'amplitude', VIEW = 'average', SELECTED_FREQ = null;
+let ALL_FREQS = [], FREQ_STATS = {};
+let heatLayer = null, markerLayer = null;
+
+// Layer system
+let LAYERS = [];        // [{id, name, color, visible, group, leafletGroup, type}]
+let LAYER_ID = 0;
+const LAYER_COLORS = ['#f0a500','#00d4aa','#a78bfa','#ff4d4f','#3fb950','#38bdf8','#fb923c','#f472b6'];
+
+// Draw state
+let DRAW_MODE = false;
+let DRAW_TOOL = 'placemark';   // 'placemark' | 'path'
+let pathPoints = [];
+let pathPolyline = null;
+let pathTempMarkers = [];
+let pendingLatLng = null;
+let editTarget = null;         // layer item being renamed
+
+// ════════════════════════════════════════════════════════════════════
+//  MAP INIT
+// ════════════════════════════════════════════════════════════════════
+const map = L.map('map', { zoomControl: true }).setView([39.1157, -77.5636], 13);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap © CARTO', maxZoom: 19
+}).addTo(map);
+markerLayer = L.layerGroup().addTo(map);
+
+// ── Map click handler ──────────────────────────────────────────────
+map.on('click', function(e) {
+  if (!DRAW_MODE) return;
+  if (DRAW_TOOL === 'placemark') {
+    pendingLatLng = e.latlng;
+    openModal('Add placemark', null);
+  } else if (DRAW_TOOL === 'path') {
+    pathPoints.push(e.latlng);
+    updatePathPreview();
+    document.getElementById('dt-finish').style.display = pathPoints.length >= 2 ? '' : 'none';
+  }
+});
+
+map.on('mousemove', function(e) {
+  if (DRAW_MODE && DRAW_TOOL === 'path' && pathPoints.length > 0) {
+    updatePathPreview(e.latlng);
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════
+//  CHART INIT
+// ════════════════════════════════════════════════════════════════════
+const chartCfg = (label, color) => ({
+  type: 'bar',
+  data: { labels: [], datasets: [{ label, data: [], backgroundColor: color, borderWidth: 0, borderRadius: 3 }] },
+  options: {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: '#8b949e', font: { size: 9 }, maxRotation: 45 }, grid: { color: '#30363d' } },
+      y: { ticks: { color: '#8b949e', font: { size: 9 } }, grid: { color: '#30363d' } }
+    }
+  }
+});
+const spectrumChart   = new Chart(document.getElementById('chart-spectrum'),  chartCfg('Amplitude (dBm)','#00d4aa'));
+const snrChart        = new Chart(document.getElementById('chart-snr'),        chartCfg('SNR (dB)',       '#f0a500'));
+const timeseriesChart = new Chart(document.getElementById('chart-timeseries'), {
+  type: 'line',
+  data: { labels: [], datasets: [
+    { label: 'Amplitude', data: [], borderColor: '#00d4aa', backgroundColor: 'rgba(0,212,170,.12)', tension: .3, pointRadius: 3 },
+    { label: 'SNR',       data: [], borderColor: '#f0a500', backgroundColor: 'rgba(240,165,0,.12)',  tension: .3, pointRadius: 3 }
+  ]},
+  options: {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    plugins: { legend: { labels: { color: '#8b949e', font: { size: 9 }, boxWidth: 12 } } },
+    scales: {
+      x: { ticks: { color: '#8b949e', font: { size: 8 }, maxRotation: 45, maxTicksLimit: 8 }, grid: { color: '#30363d' } },
+      y: { ticks: { color: '#8b949e', font: { size: 9 } }, grid: { color: '#30363d' } }
+    }
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════
+//  API / DATA
+// ════════════════════════════════════════════════════════════════════
+async function apiFetch(path) {
+  const r = await fetch(API + path);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+async function refreshAll() {
+  try {
+    const [status, freqs, sessions] = await Promise.all([
+      apiFetch('/api/status'), apiFetch('/api/frequencies'), apiFetch('/api/sessions?limit=1'),
+    ]);
+    document.getElementById('status-pill').textContent = '● online';
+    document.getElementById('status-pill').className = 'pill live';
+    document.getElementById('session-count').textContent = `${status.n_sessions||0} sessions`;
+    document.getElementById('last-update').textContent = 'Updated ' + new Date().toLocaleTimeString();
+    const lat = status.latest_session;
+    if (lat) {
+      document.getElementById('nf-mean').textContent   = lat.noise_mean   ? lat.noise_mean.toFixed(1)   : '—';
+      document.getElementById('nf-std').textContent    = lat.noise_std    ? lat.noise_std.toFixed(2)    : '—';
+      document.getElementById('nf-median').textContent = lat.noise_median ? lat.noise_median.toFixed(1) : '—';
+      document.getElementById('nf-n').textContent      = lat.noise_n ?? '—';
+      if (lat.latitude) {
+        document.getElementById('gps-bar').textContent =
+          `📡 ${lat.latitude.toFixed(5)}, ${lat.longitude.toFixed(5)}  alt ${lat.altitude_m?lat.altitude_m.toFixed(0)+'m':'?'}  HDOP ${lat.hdop??'?'}`;
+      }
+    }
+    ALL_FREQS = freqs;
+    renderFreqList(freqs);
+    if (sessions.length) await refreshSessionCharts(sessions[0].id);
+    await refreshHeatmap();
+    document.getElementById('loading').classList.add('hidden');
+  } catch(e) {
+    document.getElementById('status-pill').textContent = '● offline';
+    document.getElementById('status-pill').className = 'pill warn';
+    document.getElementById('loading').classList.add('hidden');
+    console.error(e);
+  }
+}
+
+async function refreshSessionCharts(sessionId) {
+  const data = await apiFetch(`/api/sessions/${sessionId}/detail`);
+  const meas = data.measurements || [];
+  if (!meas.length) return;
+  const labels = meas.map(m => fmtFreq(m.frequency_hz));
+  const amps   = meas.map(m => m.amplitude_dbm);
+  const snrs   = meas.map(m => m.snr_db ?? 0);
+  spectrumChart.data.labels = labels;
+  spectrumChart.data.datasets[0].data = amps;
+  spectrumChart.data.datasets[0].backgroundColor = meas.map(m => m.is_outlier ? '#ff4d4f' : '#00d4aa');
+  spectrumChart.update();
+  snrChart.data.labels = labels;
+  snrChart.data.datasets[0].data = snrs;
+  snrChart.data.datasets[0].backgroundColor = meas.map(m => m.is_outlier ? '#ff4d4f' : '#f0a500');
+  snrChart.update();
+  const alertBar = document.getElementById('alerts-bar');
+  alertBar.innerHTML = '';
+  meas.filter(m => m.is_outlier).forEach(m => {
+    const el = document.createElement('div');
+    el.className = 'alert-pill';
+    el.textContent = `⚠ ${fmtFreq(m.frequency_hz)} — ${m.amplitude_dbm.toFixed(1)} dBm (SNR ${(m.snr_db||0).toFixed(1)} dB)`;
+    alertBar.appendChild(el);
+  });
+}
+
+async function refreshHeatmap() {
+  let endpoint = VIEW === 'average'
+    ? `/api/heatmap/average?mode=${MODE}`
+    : SELECTED_FREQ
+      ? `/api/heatmap/frequency/${SELECTED_FREQ}?mode=${MODE}`
+      : `/api/heatmap/average?mode=${MODE}`;
+  const geojson = await apiFetch(endpoint);
+  markerLayer.clearLayers();
+  if (!geojson.features || !geojson.features.length) return;
+  const values = geojson.features.map(f => f.properties.value);
+  const minV = Math.min(...values), maxV = Math.max(...values), range = maxV - minV || 1;
+  const unit = MODE === 'snr' ? 'dB' : 'dBm';
+  document.getElementById('legend-title').textContent = MODE === 'snr' ? 'SNR (dB)' : 'Amplitude (dBm)';
+  document.getElementById('leg-lo').textContent = minV.toFixed(1) + unit;
+  document.getElementById('leg-hi').textContent = maxV.toFixed(1) + unit;
+  if (heatLayer) map.removeLayer(heatLayer);
+  const heatPoints = geojson.features.map(f => {
+    const [lng, lat] = f.geometry.coordinates;
+    return [lat, lng, (f.properties.value - minV) / range];
+  });
+  heatLayer = L.heatLayer(heatPoints, {
+    radius: 30, blur: 25, maxZoom: 17,
+    gradient: { 0.0:'#0d47a1', 0.2:'#0288d1', 0.4:'#00bcd4', 0.6:'#69ff47', 0.8:'#ffff00', 1.0:'#ff1744' }
+  }).addTo(map);
+  geojson.features.forEach(f => {
+    const [lng, lat] = f.geometry.coordinates;
+    const val = f.properties.value, norm = (val - minV) / range;
+    const color = norm > .66 ? '#ff4d4f' : norm > .33 ? '#f0a500' : '#3fb950';
+    const phCls = norm > .66 ? 'bad' : norm > .33 ? 'warn' : 'good';
+    L.circleMarker([lat, lng], { radius: 7, color, weight: 1.5, fillOpacity: 0, opacity: .7 })
+     .bindPopup(`<div class="popup-inner"><div class="ph ${phCls}">${val.toFixed(1)} ${unit}</div><div>Noise floor: ${(f.properties.noise_floor||0).toFixed(1)} dBm</div><div>${(f.properties.timestamp||'').slice(0,19).replace('T',' ')} UTC</div></div>`)
+     .addTo(markerLayer);
+  });
+  const lls = geojson.features.map(f => [f.geometry.coordinates[1], f.geometry.coordinates[0]]);
+  if (lls.length) map.fitBounds(L.latLngBounds(lls).pad(.2));
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  FREQ LIST
+// ════════════════════════════════════════════════════════════════════
+function renderFreqList(freqs) {
+  const el = document.getElementById('freq-list');
+  el.innerHTML = '';
+  freqs.forEach(f => {
+    const item = document.createElement('div');
+    item.className = 'freq-item' + (f === SELECTED_FREQ ? ' active' : '');
+    item.dataset.freq = f;
+    const badge = document.createElement('span');
+    badge.className = 'freq-badge'; badge.textContent = '…'; badge.id = `badge-${f}`;
+    item.innerHTML = `<span class="freq-mhz">${fmtFreq(f)}</span>`;
+    item.appendChild(badge);
+    item.onclick = () => selectFreq(f);
+    el.appendChild(item);
+    apiFetch(`/api/stats/frequency/${f}`).then(stats => {
+      FREQ_STATS[f] = stats;
+      const amp = stats.amplitude_dbm, snr = stats.snr_db;
+      if (amp && amp.n > 0) {
+        badge.textContent = MODE === 'snr' ? `${snr.mean.toFixed(1)} dB` : `${amp.mean.toFixed(1)} dBm`;
+        badge.className = 'freq-badge' + (snr && snr.mean > 10 ? ' alert' : '');
+      } else { badge.textContent = '—'; }
+    }).catch(() => { badge.textContent = '—'; });
+  });
+}
+
+async function selectFreq(freq) {
+  SELECTED_FREQ = freq; VIEW = 'single';
+  document.getElementById('btn-avg').classList.remove('active');
+  document.getElementById('btn-single').classList.add('active');
+  document.querySelectorAll('.freq-item').forEach(el => el.classList.toggle('active', +el.dataset.freq === freq));
+  const stats = FREQ_STATS[freq] || await apiFetch(`/api/stats/frequency/${freq}`);
+  FREQ_STATS[freq] = stats;
+  const ts = stats.timeseries || [];
+  document.getElementById('timeseries-title').textContent = `Time Series — ${fmtFreq(freq)}`;
+  timeseriesChart.data.labels = ts.map(p => p.t ? p.t.slice(11,16) : '');
+  timeseriesChart.data.datasets[0].data = ts.map(p => p.amp);
+  timeseriesChart.data.datasets[1].data = ts.map(p => p.snr ?? null);
+  timeseriesChart.update();
+  await refreshHeatmap();
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  LAYER SYSTEM
+// ════════════════════════════════════════════════════════════════════
+function makeLayer(name, color, type, source) {
+  const id = ++LAYER_ID;
+  const leafletGroup = L.layerGroup().addTo(map);
+  const layer = { id, name, color: color || nextColor(), visible: true, type, source, leafletGroup, count: 0 };
+  LAYERS.push(layer);
+  renderLayerList();
+  return layer;
+}
+
+function nextColor() {
+  return LAYER_COLORS[LAYERS.length % LAYER_COLORS.length];
+}
+
+function renderLayerList() {
+  const el = document.getElementById('layer-list');
+  if (!LAYERS.length) {
+    el.innerHTML = '<div class="layer-empty">No layers yet.<br>Import a KMZ or use Draw to add placemarks and paths.</div>';
+    return;
+  }
+  el.innerHTML = '';
+  [...LAYERS].reverse().forEach(layer => {
+    const div = document.createElement('div');
+    div.className = 'layer-item';
+    div.innerHTML = `
+      <div class="layer-color" style="background:${layer.color}"></div>
+      <span class="layer-name" title="${layer.name}">${layer.name}</span>
+      <span class="layer-count">${layer.count} item${layer.count!==1?'s':''}</span>
+      <span class="layer-zoom" onclick="zoomLayer(${layer.id})" title="Zoom to layer">⊕</span>
+      <span class="layer-vis" onclick="toggleLayer(${layer.id})" title="${layer.visible?'Hide':'Show'}">${layer.visible?'👁':'○'}</span>
+      <span class="layer-del" onclick="deleteLayer(${layer.id})" title="Delete layer">✕</span>
+    `;
+    el.appendChild(div);
+  });
+}
+
+function toggleLayer(id) {
+  const layer = LAYERS.find(l => l.id === id);
+  if (!layer) return;
+  layer.visible = !layer.visible;
+  if (layer.visible) map.addLayer(layer.leafletGroup);
+  else map.removeLayer(layer.leafletGroup);
+  renderLayerList();
+}
+
+function zoomLayer(id) {
+  const layer = LAYERS.find(l => l.id === id);
+  if (!layer || !layer.count) return;
+  const bounds = L.latLngBounds([]);
+  layer.leafletGroup.eachLayer(l => {
+    if (l.getLatLng) bounds.extend(l.getLatLng());
+    else if (l.getLatLngs) {
+      const pts = l.getLatLngs().flat(Infinity);
+      pts.forEach(p => bounds.extend(p));
+    }
+  });
+  if (bounds.isValid()) map.fitBounds(bounds.pad(.2));
+}
+
+function deleteLayer(id) {
+  const idx = LAYERS.findIndex(l => l.id === id);
+  if (idx < 0) return;
+  map.removeLayer(LAYERS[idx].leafletGroup);
+  LAYERS.splice(idx, 1);
+  renderLayerList();
+}
+
+function clearAllOverlays() {
+  if (!confirm('Remove all overlay layers?')) return;
+  LAYERS.forEach(l => map.removeLayer(l.leafletGroup));
+  LAYERS = [];
+  renderLayerList();
+}
+
+// ── Styled placemark icon ──────────────────────────────────────────
+function makeIcon(color) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="26" height="34" viewBox="0 0 26 34">
+    <path d="M13 0C5.82 0 0 5.82 0 13c0 9 13 21 13 21s13-12 13-21C26 5.82 20.18 0 13 0z" fill="${color}" stroke="#fff" stroke-width="1.5"/>
+    <circle cx="13" cy="13" r="5" fill="white"/>
+  </svg>`;
+  return L.divIcon({
+    html: svg, className: '', iconSize: [26, 34], iconAnchor: [13, 34], popupAnchor: [0, -36]
+  });
+}
+
+// ── Add a single placemark to a layer ─────────────────────────────
+function addPlacemark(layer, latlng, name, desc, color) {
+  color = color || layer.color;
+  const marker = L.marker(latlng, { icon: makeIcon(color), draggable: false });
+  marker._rfData = { layerId: layer.id, name, desc, color };
+  marker.bindPopup(buildPlacemarkPopup(name, desc, marker));
+  marker.addTo(layer.leafletGroup);
+  layer.count++;
+  renderLayerList();
+  return marker;
+}
+
+function buildPlacemarkPopup(name, desc, marker) {
+  const div = document.createElement('div');
+  div.className = 'popup-inner';
+  div.innerHTML = `
+    <div class="pop-title">📍 ${name || 'Placemark'}</div>
+    ${desc ? `<div class="pop-desc">${desc}</div>` : ''}
+    <div style="margin-top:8px;display:flex;gap:6px">
+      <button class="popup-edit-btn" onclick="editPlacemark(this)">Edit</button>
+      <button class="popup-del-btn" onclick="deletePlacemark(this)">Remove</button>
+    </div>
+  `;
+  div._marker = marker;
+  return div;
+}
+
+function editPlacemark(btn) {
+  const marker = btn.closest('.popup-inner')._marker || btn._marker;
+  if (!marker) return;
+  editTarget = marker;
+  document.getElementById('modal-name').value  = marker._rfData.name  || '';
+  document.getElementById('modal-desc').value  = marker._rfData.desc  || '';
+  document.getElementById('modal-color').value = marker._rfData.color || '#f0a500';
+  populateLayerSelect(marker._rfData.layerId);
+  openModal('Edit placemark', marker._rfData.layerId);
+}
+
+function deletePlacemark(btn) {
+  const inner = btn.closest('.popup-inner');
+  const marker = inner._marker;
+  if (!marker) return;
+  const layer = LAYERS.find(l => l.id === marker._rfData.layerId);
+  if (layer) { layer.leafletGroup.removeLayer(marker); layer.count = Math.max(0, layer.count-1); renderLayerList(); }
+  map.closePopup();
+}
+
+// ── Add a path to a layer ─────────────────────────────────────────
+function addPath(layer, latlngs, name, desc, color) {
+  color = color || layer.color;
+  const poly = L.polyline(latlngs, { color, weight: 3, opacity: .85, dashArray: null });
+  poly._rfData = { layerId: layer.id, name, desc, color };
+  poly.bindPopup(`<div class="popup-inner"><div class="pop-title">〰 ${name||'Path'}</div>${desc?`<div class="pop-desc">${desc}</div>`:''}<div style="font-size:.72rem;color:var(--muted);margin-top:4px">${latlngs.length} points</div></div>`);
+  poly.addTo(layer.leafletGroup);
+  layer.count++;
+  renderLayerList();
+  return poly;
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  DRAW MODE
+// ════════════════════════════════════════════════════════════════════
+function toggleDrawMode() {
+  if (DRAW_MODE) exitDrawMode();
+  else startDraw('placemark');
+}
+
+function startDraw(tool) {
+  DRAW_MODE = true;
+  DRAW_TOOL = tool;
+  pathPoints = [];
+  document.getElementById('draw-toolbar').classList.add('visible');
+  document.getElementById('btn-draw-mode').classList.add('active');
+  document.getElementById('map').style.cursor = 'crosshair';
+  setDrawTool(tool);
+  // Switch to layers tab so user sees the result
+  sbTab('layers', document.querySelectorAll('.sb-tab')[1]);
+}
+
+function setDrawTool(tool) {
+  DRAW_TOOL = tool;
+  // clear any in-progress path when switching tools
+  clearPathPreview();
+  pathPoints = [];
+  document.getElementById('dt-placemark').classList.toggle('active', tool==='placemark');
+  document.getElementById('dt-path').classList.toggle('active', tool==='path');
+  document.getElementById('dt-finish').style.display = 'none';
+}
+
+function exitDrawMode() {
+  DRAW_MODE = false;
+  clearPathPreview();
+  pathPoints = [];
+  document.getElementById('draw-toolbar').classList.remove('visible');
+  document.getElementById('btn-draw-mode').classList.remove('active');
+  document.getElementById('map').style.cursor = '';
+}
+
+function updatePathPreview(cursor) {
+  clearPathPreview();
+  const pts = cursor ? [...pathPoints, cursor] : pathPoints;
+  if (pts.length < 2) {
+    // show single dot
+    if (pathPoints.length === 1) {
+      pathTempMarkers.push(
+        L.circleMarker(pathPoints[0], { radius:5, color:'#a78bfa', fillColor:'#a78bfa', fillOpacity:1, weight:1 }).addTo(map)
+      );
+    }
+    return;
+  }
+  pathPolyline = L.polyline(pts, { color:'#a78bfa', weight:2.5, dashArray:'6,4', opacity:.8 }).addTo(map);
+  pathPoints.forEach(p => {
+    pathTempMarkers.push(
+      L.circleMarker(p, { radius:5, color:'#a78bfa', fillColor:'#a78bfa', fillOpacity:1, weight:1 }).addTo(map)
+    );
+  });
+}
+
+function clearPathPreview() {
+  if (pathPolyline) { map.removeLayer(pathPolyline); pathPolyline = null; }
+  pathTempMarkers.forEach(m => map.removeLayer(m));
+  pathTempMarkers = [];
+}
+
+function finishPath() {
+  if (pathPoints.length < 2) return;
+  const pts = [...pathPoints];
+  clearPathPreview();
+  pathPoints = [];
+  document.getElementById('dt-finish').style.display = 'none';
+  // Ask for name
+  pendingLatLng = pts;  // reuse pendingLatLng to store path points
+  openModal('Name this path', null, 'path');
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  NAME MODAL
+// ════════════════════════════════════════════════════════════════════
+let _modalType = 'placemark';
+
+function populateLayerSelect(selectedId) {
+  const sel = document.getElementById('modal-layer');
+  sel.innerHTML = '<option value="new">— New layer —</option>';
+  LAYERS.forEach(l => {
+    const opt = document.createElement('option');
+    opt.value = l.id; opt.textContent = l.name;
+    if (l.id === selectedId) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function openModal(title, layerId, type) {
+  _modalType = type || 'placemark';
+  document.getElementById('modal-title').textContent = title;
+  if (!editTarget) {
+    document.getElementById('modal-name').value = '';
+    document.getElementById('modal-desc').value = '';
+    document.getElementById('modal-color').value = nextColor();
+  }
+  populateLayerSelect(layerId);
+  document.getElementById('name-modal').classList.add('open');
+  document.getElementById('modal-name').focus();
+}
+
+function modalCancel() {
+  document.getElementById('name-modal').classList.remove('open');
+  pendingLatLng = null;
+  editTarget = null;
+}
+
+function modalConfirm() {
+  const name  = document.getElementById('modal-name').value.trim() || 'Unnamed';
+  const desc  = document.getElementById('modal-desc').value.trim();
+  const color = document.getElementById('modal-color').value;
+  const layerSel = document.getElementById('modal-layer').value;
+  document.getElementById('name-modal').classList.remove('open');
+
+  if (editTarget) {
+    // Update existing placemark
+    const marker = editTarget;
+    marker._rfData.name  = name;
+    marker._rfData.desc  = desc;
+    marker._rfData.color = color;
+    marker.setIcon(makeIcon(color));
+    marker.setPopupContent(buildPlacemarkPopup(name, desc, marker));
+    editTarget = null;
+    return;
+  }
+
+  // Find or create layer
+  let layer;
+  if (layerSel === 'new') {
+    layer = makeLayer('My layer ' + (LAYERS.length+1), color, 'drawn', 'manual');
+  } else {
+    layer = LAYERS.find(l => l.id == layerSel);
+    if (!layer) layer = makeLayer('Layer', color, 'drawn', 'manual');
+  }
+
+  if (_modalType === 'path' && Array.isArray(pendingLatLng)) {
+    addPath(layer, pendingLatLng, name, desc, color);
+  } else if (pendingLatLng) {
+    addPlacemark(layer, pendingLatLng, name, desc, color);
+  }
+  pendingLatLng = null;
+}
+
+// Enter key submits modal
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && document.getElementById('name-modal').classList.contains('open')
+      && document.activeElement.tagName !== 'TEXTAREA') {
+    modalConfirm();
+  }
+  if (e.key === 'Escape') {
+    if (document.getElementById('name-modal').classList.contains('open')) modalCancel();
+    else if (DRAW_MODE) exitDrawMode();
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════
+//  KMZ / KML IMPORT
+// ════════════════════════════════════════════════════════════════════
+document.getElementById('kmz-input').addEventListener('change', function(e) {
+  Array.from(e.target.files).forEach(f => importFile(f));
+  e.target.value = '';  // reset so same file can be re-imported
+});
+
+// Drag-and-drop anywhere on page
+document.addEventListener('dragover', e => { e.preventDefault(); document.getElementById('drop-zone').classList.add('active'); });
+document.addEventListener('dragleave', e => { if (!e.relatedTarget) document.getElementById('drop-zone').classList.remove('active'); });
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('active');
+  Array.from(e.dataTransfer.files).forEach(f => importFile(f));
+});
+
+async function importFile(file) {
+  const name = file.name.toLowerCase();
+  let kmlText;
+  try {
+    if (name.endsWith('.kmz')) {
+      // KMZ = ZIP containing doc.kml (+ optional assets)
+      const zip = await JSZip.loadAsync(file);
+      // Find the main KML — usually doc.kml but any .kml will do
+      const kmlFile = Object.values(zip.files).find(f => f.name.endsWith('.kml') && !f.dir);
+      if (!kmlFile) { alert(`No KML found inside ${file.name}`); return; }
+      kmlText = await kmlFile.async('text');
+    } else if (name.endsWith('.kml')) {
+      kmlText = await file.text();
+    } else {
+      alert(`Unsupported file type: ${file.name}\nPlease use .kml or .kmz`);
+      return;
+    }
+    parseAndDisplayKML(kmlText, file.name.replace(/\.(kmz|kml)$/i,''));
+  } catch(err) {
+    alert(`Failed to load ${file.name}:\n${err.message}`);
+    console.error(err);
+  }
+}
+
+// ── KML parser ────────────────────────────────────────────────────
+function parseAndDisplayKML(kmlText, sourceName) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(kmlText, 'text/xml');
+  if (doc.querySelector('parsererror')) {
+    alert('Invalid KML/XML — could not parse file.');
+    return;
+  }
+
+  // Group placemarks by their KML folder
+  const folders = [...doc.querySelectorAll('Folder')];
+  const rootPlacemarks = [...doc.querySelectorAll('kml > Document > Placemark, kml > Placemark')];
+
+  let totalFeatures = 0;
+
+  const processPlacemark = (pm, layer) => {
+    const name  = getText(pm, 'name')        || 'Unnamed';
+    const desc  = getText(pm, 'description') || '';
+    const color = getKmlColor(pm, doc)       || layer.color;
+
+    // Point
+    const point = pm.querySelector('Point > coordinates');
+    if (point) {
+      const [lng, lat, alt] = parseCoords(point.textContent.trim())[0];
+      if (!isNaN(lat) && !isNaN(lng)) {
+        addPlacemark(layer, [lat, lng], name, desc, color);
+        totalFeatures++;
+      }
+    }
+
+    // LineString (path)
+    const lineCoords = pm.querySelector('LineString > coordinates');
+    if (lineCoords) {
+      const pts = parseCoords(lineCoords.textContent.trim());
+      if (pts.length >= 2) {
+        addPath(layer, pts.map(([lng,lat]) => [lat,lng]), name, desc, color);
+        totalFeatures++;
+      }
+    }
+
+    // Polygon outer ring — drawn as path
+    const polyCoords = pm.querySelector('Polygon outerBoundaryIs LinearRing coordinates');
+    if (polyCoords) {
+      const pts = parseCoords(polyCoords.textContent.trim());
+      if (pts.length >= 3) {
+        const latlngs = pts.map(([lng,lat]) => [lat,lng]);
+        const poly = L.polygon(latlngs, { color, weight:2.5, fillColor:color, fillOpacity:.12, opacity:.85 });
+        poly._rfData = { layerId: layer.id, name, desc, color };
+        poly.bindPopup(`<div class="popup-inner"><div class="pop-title">⬡ ${name}</div>${desc?`<div class="pop-desc">${desc}</div>`:''}</div>`);
+        poly.addTo(layer.leafletGroup);
+        layer.count++;
+        renderLayerList();
+        totalFeatures++;
+      }
+    }
+
+    // MultiGeometry — recurse
+    pm.querySelectorAll('MultiGeometry').forEach(mg => {
+      const fakePm = doc.createElement('Placemark');
+      fakePm.append(...mg.cloneNode(true).children);
+      processPlacemark(fakePm, layer);
+    });
+  };
+
+  // Process folders
+  folders.forEach(folder => {
+    const folderName = getText(folder,'name') || sourceName;
+    const layer = makeLayer(`${sourceName} / ${folderName}`, nextColor(), 'kml', sourceName);
+    folder.querySelectorAll(':scope > Placemark').forEach(pm => processPlacemark(pm, layer));
+  });
+
+  // Root-level placemarks (not in any folder)
+  if (rootPlacemarks.length) {
+    const layer = makeLayer(sourceName, nextColor(), 'kml', sourceName);
+    rootPlacemarks.forEach(pm => processPlacemark(pm, layer));
+  }
+
+  if (totalFeatures === 0) {
+    alert(`No recognisable features found in ${sourceName}.\nSupported: Point, LineString, Polygon, MultiGeometry.`);
+    return;
+  }
+
+  // Zoom to imported content
+  const newest = LAYERS[LAYERS.length - 1];
+  if (newest) zoomLayer(newest.id);
+
+  // Auto-switch to layers tab
+  sbTab('layers', document.querySelectorAll('.sb-tab')[1]);
+
+  console.log(`Imported ${totalFeatures} features from ${sourceName}`);
+}
+
+// ── KML helpers ───────────────────────────────────────────────────
+function getText(el, tag) {
+  const t = el.querySelector(tag);
+  return t ? t.textContent.trim() : '';
+}
+
+function parseCoords(raw) {
+  // KML coord format: "lon,lat[,alt] lon,lat[,alt] …" or newline separated
+  return raw.trim().split(/\s+/).map(c => {
+    const parts = c.split(',').map(Number);
+    return parts; // [lng, lat, alt?]
+  }).filter(p => p.length >= 2 && !isNaN(p[0]) && !isNaN(p[1]));
+}
+
+function getKmlColor(pm, doc) {
+  // Try to get color from Style/StyleMap referenced by styleUrl or inline Style
+  try {
+    let styleEl = pm.querySelector('Style');
+    const styleUrl = getText(pm, 'styleUrl').replace('#','');
+    if (!styleEl && styleUrl) {
+      styleEl = doc.querySelector(`Style[id="${styleUrl}"], StyleMap[id="${styleUrl}"]`);
+      if (styleEl && styleEl.tagName === 'StyleMap') {
+        const normalKey = [...styleEl.querySelectorAll('Pair')].find(p => getText(p,'key') === 'normal');
+        if (normalKey) {
+          const ref = getText(normalKey,'styleUrl').replace('#','');
+          styleEl = doc.querySelector(`Style[id="${ref}"]`);
+        }
+      }
+    }
+    if (!styleEl) return null;
+    // Icon color
+    const iconColor = styleEl.querySelector('IconStyle > color');
+    if (iconColor) return kmlColorToHex(iconColor.textContent.trim());
+    // Line color
+    const lineColor = styleEl.querySelector('LineStyle > color');
+    if (lineColor) return kmlColorToHex(lineColor.textContent.trim());
+    // Poly color
+    const polyColor = styleEl.querySelector('PolyStyle > color');
+    if (polyColor) return kmlColorToHex(polyColor.textContent.trim());
+  } catch(e) {}
+  return null;
+}
+
+function kmlColorToHex(kmlColor) {
+  // KML color is AABBGGRR hex; convert to #RRGGBB
+  if (!kmlColor || kmlColor.length < 6) return null;
+  const str = kmlColor.replace(/\s/g,'');
+  if (str.length === 8) {
+    const r = str.slice(6,8), g = str.slice(4,6), b = str.slice(2,4);
+    return `#${r}${g}${b}`;
+  }
+  if (str.length === 6) {
+    // assume RRGGBB already
+    return `#${str}`;
+  }
+  return null;
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  CONTROLS
+// ════════════════════════════════════════════════════════════════════
+function setMode(mode) {
+  MODE = mode;
+  document.getElementById('btn-amplitude').classList.toggle('active', mode === 'amplitude');
+  document.getElementById('btn-snr').classList.toggle('active', mode === 'snr');
+  renderFreqList(ALL_FREQS);
+  refreshHeatmap();
+}
+
+function setView(view) {
+  VIEW = view;
+  document.getElementById('btn-avg').classList.toggle('active', view === 'average');
+  document.getElementById('btn-single').classList.toggle('active', view === 'single');
+  if (view === 'average') SELECTED_FREQ = null;
+  refreshHeatmap();
+}
+
+function sbTab(id, el) {
+  document.querySelectorAll('.sb-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.sb-panel').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('sb-' + id).classList.add('active');
+}
+
+function fmtFreq(hz) {
+  if (hz >= 1e9) return (hz/1e9).toFixed(4) + ' GHz';
+  if (hz >= 1e6) return (hz/1e6).toFixed(3) + ' MHz';
+  return (hz/1e3).toFixed(1) + ' kHz';
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  FILTER
+// ════════════════════════════════════════════════════════════════════
+let FILTER_ACTIVE = false;
+let FILTER = { from: '', to: '', label: '', freq: '' };
+
+function toggleFilter() {
+  const bar = document.getElementById('filter-bar');
+  bar.classList.toggle('open');
+  document.getElementById('btn-filter').classList.toggle('active', bar.classList.contains('open'));
+}
+
+function applyFilter() {
+  FILTER.from  = document.getElementById('f-from').value;
+  FILTER.to    = document.getElementById('f-to').value;
+  FILTER.label = document.getElementById('f-label').value.trim();
+  FILTER.freq  = document.getElementById('f-freq').value;
+  FILTER_ACTIVE = !!(FILTER.from || FILTER.to || FILTER.label || FILTER.freq);
+  document.getElementById('filter-active-badge').classList.toggle('on', FILTER_ACTIVE);
+  refreshHeatmap();
+}
+
+function clearFilter() {
+  FILTER = { from: '', to: '', label: '', freq: '' };
+  FILTER_ACTIVE = false;
+  ['f-from','f-to','f-label','f-freq'].forEach(id => { document.getElementById(id).value = ''; });
+  document.getElementById('filter-active-badge').classList.remove('on');
+  document.getElementById('filter-bar').classList.remove('open');
+  refreshHeatmap();
+}
+
+function populateFilterFreqs(freqs) {
+  const sel = document.getElementById('f-freq');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">All frequencies</option>';
+  freqs.forEach(f => {
+    const opt = document.createElement('option');
+    opt.value = f; opt.textContent = fmtFreq(f);
+    if (String(f) === cur) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  EXPORT MENU
+// ════════════════════════════════════════════════════════════════════
+function toggleExportMenu() {
+  const menu = document.getElementById('export-menu');
+  menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#btn-export') && !e.target.closest('#export-menu')) {
+    const m = document.getElementById('export-menu');
+    if (m) m.style.display = 'none';
+  }
+});
+function exportAction(type) {
+  document.getElementById('export-menu').style.display = 'none';
+  const urls = {
+    csv:          '/api/export/csv',
+    geojson:      '/api/export/geojson',
+    kml:          '/api/export/kml',
+    overlays_kmz: '/api/export/overlays/kmz',
+    combined_kmz: '/api/export/combined/kmz',
+  };
+  if (urls[type]) window.open(API + urls[type], '_blank');
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  OVERLAY SERVER PERSISTENCE
+// ════════════════════════════════════════════════════════════════════
+async function saveLayerToServer(layer) {
+  try {
+    const resp = await fetch(API + '/api/overlays/layer', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: layer.name, color: layer.color, type: layer.type || 'drawn', source: layer.source || null }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    layer.serverId = data.id;
+    return data.id;
+  } catch (e) { console.warn('Could not persist layer:', e); return null; }
+}
+
+async function saveItemToServer(servLayerId, itemType, name, desc, color, geometry) {
+  try {
+    await fetch(API + '/api/overlays/item', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ layer_id: servLayerId, item_type: itemType, name, description: desc, color, geometry }),
+    });
+  } catch (e) { console.warn('Could not persist item:', e); }
+}
+
+async function loadOverlaysFromServer() {
+  try {
+    const layers = await apiFetch('/api/overlays');
+    for (const layer of layers) {
+      if (!layer.items || !layer.items.length) continue;
+      const leafletGroup = L.layerGroup().addTo(map);
+      const lyr = {
+        id: ++LAYER_ID, name: layer.name, color: layer.color,
+        visible: !!layer.visible, type: layer.type, source: layer.source,
+        leafletGroup, count: 0, serverId: layer.id,
+      };
+      LAYERS.push(lyr);
+      for (const item of layer.items) {
+        const geom = item.geometry;
+        const color = item.color || layer.color;
+        if (geom.type === 'Point') {
+          const [lng, lat] = geom.coordinates;
+          addPlacemark(lyr, [lat, lng], item.name || 'Unnamed', item.description || '', color);
+        } else if (geom.type === 'LineString') {
+          addPath(lyr, geom.coordinates.map(c => [c[1], c[0]]), item.name || 'Path', item.description || '', color);
+        } else if (geom.type === 'Polygon') {
+          const latlngs = geom.coordinates[0].map(c => [c[1], c[0]]);
+          const poly = L.polygon(latlngs, { color, weight: 2.5, fillColor: color, fillOpacity: .12 });
+          poly._rfData = { layerId: lyr.id, name: item.name, desc: item.description, color };
+          poly.bindPopup(`<div class="popup-inner"><div class="pop-title">⬡ ${item.name||'Polygon'}</div></div>`);
+          poly.addTo(lyr.leafletGroup);
+          lyr.count++;
+        }
+      }
+      if (!layer.visible) map.removeLayer(leafletGroup);
+    }
+    if (LAYERS.length) renderLayerList();
+  } catch (e) { console.warn('Could not load overlays:', e); }
+}
+
+// Wrap makeLayer to persist
+const _makeLayerOrig = makeLayer;
+function makeLayer(name, color, type, source) {
+  const layer = _makeLayerOrig(name, color, type, source);
+  saveLayerToServer(layer);
+  return layer;
+}
+
+// Wrap addPlacemark to persist
+const _addPlacemarkOrig = addPlacemark;
+function addPlacemark(layer, latlng, name, desc, color) {
+  const marker = _addPlacemarkOrig(layer, latlng, name, desc, color);
+  if (layer.serverId) {
+    saveItemToServer(layer.serverId, 'placemark', name, desc, color || layer.color,
+      { type: 'Point', coordinates: [latlng[1], latlng[0]] });
+  }
+  return marker;
+}
+
+// Wrap addPath to persist
+const _addPathOrig = addPath;
+function addPath(layer, latlngs, name, desc, color) {
+  const poly = _addPathOrig(layer, latlngs, name, desc, color);
+  if (layer.serverId) {
+    saveItemToServer(layer.serverId, 'path', name, desc, color || layer.color,
+      { type: 'LineString', coordinates: latlngs.map(ll => [ll[1], ll[0]]) });
+  }
+  return poly;
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  ALERT POLLING
+// ════════════════════════════════════════════════════════════════════
+let _lastAlertSession = 0;
+
+async function pollAlerts() {
+  try {
+    const url = _lastAlertSession
+      ? `/api/alerts/recent?since_session=${_lastAlertSession}`
+      : `/api/alerts/recent`;
+    const alerts = await apiFetch(url);
+    alerts.forEach(a => {
+      const mhz = (a.frequency_hz / 1e6).toFixed(3);
+      showToast(`⚠ ${mhz} MHz — ${a.amplitude_dbm.toFixed(1)} dBm  SNR ${(a.snr_db||0).toFixed(1)} dB`);
+      _lastAlertSession = Math.max(_lastAlertSession, a.session_id);
+    });
+  } catch (e) { /* silent fail */ }
+}
+
+function showToast(message, durationMs = 8000) {
+  const bar = document.getElementById('alerts-bar');
+  if (!bar) return;
+  const el = document.createElement('div');
+  el.className = 'alert-pill';
+  el.textContent = message;
+  el.onclick = () => el.remove();
+  bar.appendChild(el);
+  setTimeout(() => el.remove(), durationMs);
+}
+
+// Wire up freq list refresh to also populate filter dropdown
+const _renderFreqListOrig = renderFreqList;
+function renderFreqList(freqs) {
+  _renderFreqListOrig(freqs);
+  populateFilterFreqs(freqs);
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════════════════
+async function init() {
+  await refreshAll();
+  await loadOverlaysFromServer();
+  setInterval(refreshAll, 30_000);
+  setInterval(pollAlerts,  60_000);
+}
+init();
+</script>
+</body>
+</html>

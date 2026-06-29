@@ -1,0 +1,22 @@
+[Unit]
+Description=RF Scanner Web Server
+Documentation=https://github.com/yourname/rf_scanner
+After=network.target rf-scanner.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/rf_scanner
+ExecStart=/usr/bin/python3 /home/pi/rf_scanner/server/app.py \
+    --host 0.0.0.0 \
+    --port 5000
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/rf_scanner_web.log
+StandardError=append:/var/log/rf_scanner_web.log
+Environment=FLASK_ENV=production
+
+[Install]
+WantedBy=multi-user.target

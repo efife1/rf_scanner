@@ -1,0 +1,16 @@
+# RF Scanner — Raspberry Pi dependencies
+# Install with: pip3 install -r requirements-pi.txt --break-system-packages
+
+# Serial / GPS
+pyserial==3.5
+pynmea2==1.19.0
+
+# Web server
+flask==3.0.3
+flask-cors==4.0.1
+
+# Data / stats (stdlib covers most; numpy optional for speed)
+# numpy==1.26.4   # uncomment for faster array ops on Pi 4/5
+
+# Process management helpers
+python-dotenv==1.0.1

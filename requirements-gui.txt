@@ -1,0 +1,11 @@
+# RF Scanner — Desktop GUI dependencies
+# Install with: pip3 install -r requirements-gui.txt
+
+# HTTP client (talks to Pi web server)
+requests==2.32.3
+
+# Plotting in the GUI
+matplotlib==3.9.0
+
+# tkinter ships with Python on Windows/macOS/most Linux distros.
+# On Debian/Ubuntu if missing:  sudo apt install python3-tk

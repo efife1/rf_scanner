@@ -1,0 +1,27 @@
+[Unit]
+Description=RF Scanner Daemon
+Documentation=https://github.com/yourname/rf_scanner
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/rf_scanner
+ExecStart=/usr/bin/python3 /home/pi/rf_scanner/scanner/rf_scanner.py \
+    --config /home/pi/rf_scanner/config.json \
+    --db /home/pi/rf_scanner/data/scans.db
+Restart=on-failure
+RestartSec=15
+StandardOutput=append:/var/log/rf_scanner.log
+StandardError=append:/var/log/rf_scanner.log
+
+# Give access to USB SDR dongle and serial GPS
+SupplementaryGroups=dialout plugdev
+DeviceAllow=/dev/ttyAMA0 rw
+DeviceAllow=/dev/ttyUSB0 rw
+DeviceAllow=/dev/bus/usb rw
+
+[Install]
+WantedBy=multi-user.target
