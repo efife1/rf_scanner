@@ -59,7 +59,7 @@ rf_scanner/
 ### 1. Install on Raspberry Pi
 
 ```bash
-git clone https://github.com/yourname/rf_scanner /home/pi/rf_scanner
+git clone https://github.com/efife1/rf_scanner /home/pi/rf_scanner
 cd /home/pi/rf_scanner
 sudo bash install.sh
 ```
