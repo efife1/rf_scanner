@@ -29,6 +29,18 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# ── Parse CLI flags ────────────────────────────────────────────────────────────
+SEED_DEMO="${SEED_DEMO:-0}"
+ASSUME_NO=0
+for arg in "$@"; do
+    case "$arg" in
+        --seed-demo)   SEED_DEMO=1 ;;
+        --yes|-y)      ASSUME_NO=0 ;;
+        --no-reboot)   ASSUME_NO=1 ;;
+        *) ;;
+    esac
+done
+
 # ── Detect actual non-root user ───────────────────────────────────────────────
 if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then
     PI_USER="$SUDO_USER"
@@ -256,30 +268,94 @@ systemctl enable rf-scanner.service     2>/dev/null && success "rf-scanner enabl
 systemctl enable rf-scanner-web.service 2>/dev/null && success "rf-scanner-web enabled" || warn "Could not enable rf-scanner-web"
 
 # ─────────────────────────────────────────────────────────────────────────────
-step "8 · Seed database with demo data (optional)"
+step "8 · Initialize database (demo data skipped by default)"
 # ─────────────────────────────────────────────────────────────────────────────
-echo ""
-read -rp "  Seed database with demo data? [y/N] " seed_answer
-if [[ "${seed_answer,,}" == "y" ]]; then
+# Demo seeding is now OPT-IN ONLY via --seed-demo, and never blocks install.
+# This guarantees a stable, predictable launch every time.
+mkdir -p "$(dirname "$DB_PATH")"
+
+# Always create an empty database with the correct schema so the app
+# has something valid to read on first launch, even with zero seed data.
+info "Creating empty database with schema at $DB_PATH"
+sudo -u "$PI_USER" "$VENV_DIR/bin/python3" - "$DB_PATH" << 'PYEOF' || warn "Schema init had a non-fatal issue"
+import sqlite3, sys
+db_path = sys.argv[1]
+conn = sqlite3.connect(db_path)
+conn.executescript("""
+    CREATE TABLE IF NOT EXISTS scan_sessions (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp    TEXT    NOT NULL,
+        latitude     REAL, longitude REAL, altitude_m REAL,
+        gps_quality  INTEGER, hdop REAL,
+        noise_mean   REAL, noise_std REAL, noise_median REAL,
+        noise_n      INTEGER, session_label TEXT
+    );
+    CREATE TABLE IF NOT EXISTS frequency_measurements (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id    INTEGER NOT NULL REFERENCES scan_sessions(id),
+        frequency_hz  REAL    NOT NULL,
+        amplitude_dbm REAL    NOT NULL,
+        snr_db        REAL,
+        is_outlier    INTEGER DEFAULT 0,
+        outlier_reason TEXT
+    );
+    CREATE TABLE IF NOT EXISTS noise_samples (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id    INTEGER NOT NULL REFERENCES scan_sessions(id),
+        frequency_hz  REAL    NOT NULL,
+        amplitude_dbm REAL    NOT NULL,
+        is_outlier    INTEGER DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS overlay_layers (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT    NOT NULL,
+        color      TEXT    NOT NULL DEFAULT '#f0a500',
+        type       TEXT    NOT NULL DEFAULT 'drawn',
+        source     TEXT,
+        visible    INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS overlay_items (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        layer_id    INTEGER NOT NULL REFERENCES overlay_layers(id) ON DELETE CASCADE,
+        item_type   TEXT    NOT NULL,
+        name        TEXT,
+        description TEXT,
+        color       TEXT,
+        geometry    TEXT    NOT NULL,
+        created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_fm_session ON frequency_measurements(session_id);
+    CREATE INDEX IF NOT EXISTS idx_ns_session ON noise_samples(session_id);
+    CREATE INDEX IF NOT EXISTS idx_ss_time    ON scan_sessions(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_oi_layer   ON overlay_items(layer_id);
+""")
+conn.commit()
+conn.close()
+print(f"Schema OK: {db_path}")
+PYEOF
+success "Empty database ready — app will launch with zero sessions"
+
+if [[ "${SEED_DEMO:-0}" == "1" ]]; then
     if [[ ! -f "$SEED_SCRIPT" ]]; then
-        error "seed.py not found at $SEED_SCRIPT — cannot seed"
-        error "File layout:"
-        ls -la "$INSTALL_DIR/data/" 2>/dev/null || echo "  (data/ directory missing)"
-        ((ERRORS++)) || true
+        warn "Demo seed requested but seed.py not found at $SEED_SCRIPT — skipping (non-fatal)"
     else
-        info "Running: $VENV_DIR/bin/python3 $SEED_SCRIPT --db $DB_PATH"
-        if sudo -u "$PI_USER" \
+        info "Demo data requested via --seed-demo — attempting in background-safe mode"
+        if timeout 60 sudo -u "$PI_USER" \
                "$VENV_DIR/bin/python3" "$SEED_SCRIPT" \
                --db "$DB_PATH" \
                --sessions 80; then
-            success "Database seeded at $DB_PATH"
+            success "Demo data seeded at $DB_PATH"
         else
-            error "Seed script failed — see output above"
-            ((ERRORS++)) || true
+            warn "Demo seed failed or timed out — continuing with empty database (non-fatal)"
+            warn "Retry manually any time with:"
+            warn "  sudo -u $PI_USER $VENV_DIR/bin/python3 $SEED_SCRIPT --db $DB_PATH"
         fi
     fi
 else
-    info "Skipping seed.  Run later with:"
+    info "Demo data skipped (default). To include it next time, run:"
+    info "  sudo SEED_DEMO=1 bash install.sh"
+    info "Or seed manually any time after install:"
     info "  sudo -u $PI_USER $VENV_DIR/bin/python3 $SEED_SCRIPT --db $DB_PATH"
 fi
 
@@ -341,5 +417,10 @@ find "$INSTALL_DIR" -not -path "$VENV_DIR/*" -type f 2>/dev/null \
 
 echo ""
 warn "A reboot is recommended to activate UART and kernel module changes."
-read -rp "  Reboot now? [y/N] " reboot_answer
-[[ "${reboot_answer,,}" == "y" ]] && reboot || echo "  Run 'sudo reboot' when ready."
+if [[ -t 0 && "$ASSUME_NO" -eq 0 ]]; then
+    read -rp "  Reboot now? [y/N] " reboot_answer
+    [[ "${reboot_answer,,}" == "y" ]] && reboot || echo "  Run 'sudo reboot' when ready."
+else
+    info "Non-interactive shell detected — skipping reboot prompt."
+    info "Run 'sudo reboot' manually when ready."
+fi
